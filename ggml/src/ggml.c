@@ -18123,9 +18123,12 @@ static void * incr_ptr_aligned(void ** p, size_t size, size_t align) {
 }
 
 static size_t ggml_graph_nbytes(size_t size, bool grads) {
+    printf("size: %d\n", size);
+    printf("alloc graph  %d bytes\n", sizeof(struct ggml_cgraph));
     size_t hash_size = ggml_hash_size(size * 2);
     void * p = 0;
     incr_ptr_aligned(&p, sizeof(struct ggml_cgraph), 1);
+    printf("alloc graph %d * %d bytes\n", size, sizeof(struct ggml_tensor *));
     incr_ptr_aligned(&p, size * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *)); // nodes
     incr_ptr_aligned(&p, size * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *)); // leafs
     incr_ptr_aligned(&p, hash_size * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *)); // hash keys
@@ -18135,6 +18138,8 @@ static size_t ggml_graph_nbytes(size_t size, bool grads) {
     incr_ptr_aligned(&p, ggml_bitset_size(hash_size) * sizeof(ggml_bitset_t), sizeof(ggml_bitset_t));
 
     size_t nbytes = (size_t) p;
+    printf("nbytes: %d\n", nbytes);
+    exit(0);
     return nbytes;
 }
 
