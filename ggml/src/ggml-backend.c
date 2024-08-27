@@ -1275,18 +1275,34 @@ static void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct gg
     }
 
     // pass 1: assign backends to ops with pre-allocated inputs
+    int hv_tensor_backend_ids0 = sched->hv_tensor_backend_ids[0];
+    int hv_tensor_backend_ids1 = sched->hv_tensor_backend_ids[1];
+    printf("%s:%s:%d  hv_tensor_backend_ids0: %d\n",__FILE__, __func__, __LINE__, hv_tensor_backend_ids0);
+    printf("%s:%s:%d  hv_tensor_backend_ids1: %d\n",__FILE__, __func__, __LINE__, hv_tensor_backend_ids1);
+    //#define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
+    //#define tensor_backend_id(tensor) sched->hv_tensor_backend_ids[hash_id(tensor)]
+
     for (int i = 0; i < graph->n_leafs; i++) {
         struct ggml_tensor * leaf = graph->leafs[i];
         int * leaf_backend_id = &tensor_backend_id(leaf);
         // do not overwrite user assignments
         if (*leaf_backend_id == -1) {
+            printf("%s:%s:%d  *leaf_backend_id == -1\n",__FILE__, __func__, __LINE__);
             *leaf_backend_id = ggml_backend_sched_backend_id_from_cur(sched, leaf);
         }
+
+        int index = hash_id(leaf);
+        printf("%s:%s:%d  leaf_backend_id: %d\n",__FILE__, __func__, __LINE__, leaf_backend_id);
+        printf("%s:%s:%d  *leaf_backend_id: %d\n",__FILE__, __func__, __LINE__, *leaf_backend_id);
+        printf("%s:%s:%d  index:%d,  sched->hv_tensor_backend_ids[index]:%d \n",__FILE__, __func__, __LINE__, index, sched->hv_tensor_backend_ids[index]);
+        printf("%s:%s:%d  &sched->hv_tensor_backend_ids[index]: %d\n",__FILE__, __func__, __LINE__, &sched->hv_tensor_backend_ids[index]);
+
     }
 
     for (int i = 0; i < graph->n_nodes; i++) {
         struct ggml_tensor * node = graph->nodes[i];
         int * node_backend_id = &tensor_backend_id(node);
+        printf("%s:%s:%d  node_backend_id: %d\n",__FILE__, __func__, __LINE__, node_backend_id);
         // do not overwrite user assignments
         if (*node_backend_id == -1) {
             *node_backend_id = ggml_backend_sched_backend_id_from_cur(sched, node);
@@ -1310,6 +1326,7 @@ static void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct gg
 #endif
         }
     }
+    exit(0);
 
     // pass 2: expand current backend assignments
     // assign the same backend to adjacent nodes
