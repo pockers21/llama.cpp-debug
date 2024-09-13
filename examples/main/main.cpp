@@ -1,4 +1,5 @@
 #include "common.h"
+#include "llama-impl.h"
 
 #include "console.h"
 #include "llama.h"
@@ -119,12 +120,14 @@ static void llama_log_callback_logTee(ggml_log_level level, const char * text, v
     LOG_TEE("%s", text);
 }
 
+//chat_add_and_format(model, chat_msgs, "system", params.prompt)
 static std::string chat_add_and_format(struct llama_model * model, std::vector<llama_chat_msg> & chat_msgs, std::string role, std::string content) {
     llama_chat_msg new_msg{role, content};
     auto formatted = llama_chat_format_single(
         model, g_params->chat_template, chat_msgs, new_msg, role == "user");
     chat_msgs.push_back({role, content});
     LOG("formatted: %s\n", formatted.c_str());
+    printf("formatted: %s\n", formatted.c_str());
     return formatted;
 }
 
@@ -145,7 +148,6 @@ int main(int argc, char ** argv) {
     log_dump_cmdline(argc, argv);
     llama_log_set(llama_log_callback_logTee, nullptr);
 #endif // LOG_DISABLE_LOGS
-
     // TODO: Dump params ?
     //LOG("Params perplexity: %s\n", LOG_TOSTR(params.perplexity));
 
@@ -161,7 +163,6 @@ int main(int argc, char ** argv) {
 
         return 0;
     }
-
     if (params.embedding) {
         printf("\n************\n");
         printf("%s: please use the 'embedding' tool for embedding calculations\n", __func__);
@@ -178,7 +179,6 @@ int main(int argc, char ** argv) {
     if (params.rope_freq_base != 0.0) {
         LOG_TEE("%s: warning: changing RoPE frequency base to %g.\n", __func__, params.rope_freq_base);
     }
-
     if (params.rope_freq_scale != 0.0) {
         LOG_TEE("%s: warning: scaling RoPE frequency by %g.\n", __func__, params.rope_freq_scale);
     }
@@ -191,7 +191,6 @@ int main(int argc, char ** argv) {
     }
 
     LOG_TEE("%s: seed  = %u\n", __func__, params.seed);
-
     std::mt19937 rng(params.seed);
 
     LOG("%s: llama backend init\n", __func__);
@@ -207,10 +206,14 @@ int main(int argc, char ** argv) {
 
     // load the model and apply lora adapter, if any
     LOG("%s: load the model and apply lora adapter, if any\n", __func__);
+    LLAMA_LOG_INFO("params.n_ctx: %d\n", params.n_ctx);
     llama_init_result llama_init = llama_init_from_gpt_params(params);
 
     model = llama_init.model;
     ctx = llama_init.context;
+    LLAMA_LOG_INFO("params.n_ctx: %d\n", params.n_ctx);
+    LLAMA_LOG_INFO("ctx:%d\n",ctx);
+
     if (sparams.cfg_scale > 1.f) {
         struct llama_context_params lparams = llama_context_params_from_gpt_params(params);
         ctx_guidance = llama_new_context_with_model(model, lparams);
@@ -223,8 +226,7 @@ int main(int argc, char ** argv) {
 
     const int n_ctx_train = llama_n_ctx_train(model);
     const int n_ctx = llama_n_ctx(ctx);
-    LOG("n_ctx: %d\n", n_ctx);
-
+    LLAMA_LOG_INFO("n_ctx: %d\n", n_ctx);
     if (n_ctx > n_ctx_train) {
         LOG_TEE("%s: warning: model was trained on only %d context tokens (%d specified)\n",
                 __func__, n_ctx_train, n_ctx);
@@ -272,7 +274,6 @@ int main(int argc, char ** argv) {
         GGML_ASSERT(!llama_add_eos_token(model));
     }
     LOG("add_bos: %d\n", add_bos);
-
     std::vector<llama_token> embd_inp;
 
     {
@@ -286,9 +287,9 @@ int main(int argc, char ** argv) {
             LOG("use session tokens\n");
             embd_inp = session_tokens;
         }
+        LLAMA_LOG_INFO("prompt: \"%s\"\n", log_tostr(prompt));
+        LLAMA_LOG_INFO("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
 
-        LOG("prompt: \"%s\"\n", log_tostr(prompt));
-        LOG("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
     }
 
     // Should not run without any tokens
@@ -556,6 +557,7 @@ int main(int argc, char ** argv) {
     }
 
     while ((n_remain != 0 && !is_antiprompt) || params.interactive) {
+
         // predict
         if (!embd.empty()) {
             // Note: (n_ctx - 4) here is to match the logic for commandline prompt handling via
@@ -572,12 +574,14 @@ int main(int argc, char ** argv) {
                 console::set_display(console::reset);
                 fflush(stdout);
             }
-
+            LLAMA_LOG_INFO("ga_n: %d\n",ga_n);
             if (ga_n == 1) {
                 // infinite text generation via context shifting
                 // if we run out of context:
                 // - take the n_keep first tokens from the original prompt (via n_past)
                 // - take half of the last (n_ctx - n_keep) tokens and recompute the logits in batches
+                LLAMA_LOG_INFO("n_past:%d, embd.size():%d,  std::max<int>(0, guidance_offset):%d\n",n_past, embd.size(),  std::max<int>(0, guidance_offset));
+                LLAMA_LOG_INFO("n_ctx:%d\n",n_ctx);
                 if (n_past + (int) embd.size() + std::max<int>(0, guidance_offset) >= n_ctx) {
                     if (params.n_predict == -2) {
                         LOG_TEE("\n\n%s: context full and n_predict == -%d => stopping\n", __func__, params.n_predict);
@@ -589,7 +593,8 @@ int main(int argc, char ** argv) {
 
                     LOG("context full, swapping: n_past = %d, n_left = %d, n_ctx = %d, n_keep = %d, n_discard = %d\n",
                             n_past, n_left, n_ctx, params.n_keep, n_discard);
-
+                    LLAMA_LOG_INFO("params.n_keep:%d\n",params.n_keep);
+                    LLAMA_LOG_INFO("========n_discard:%d\n",n_discard);
                     llama_kv_cache_seq_rm (ctx, 0, params.n_keep            , params.n_keep + n_discard);
                     llama_kv_cache_seq_add(ctx, 0, params.n_keep + n_discard, n_past, -n_discard);
 
@@ -691,7 +696,7 @@ int main(int argc, char ** argv) {
                     n_past_guidance += n_eval;
                 }
             }
-
+            LLAMA_LOG_INFO("embd.size():%d\n",embd.size());
             for (int i = 0; i < (int) embd.size(); i += params.n_batch) {
                 int n_eval = (int) embd.size() - i;
                 if (n_eval > params.n_batch) {
@@ -699,7 +704,8 @@ int main(int argc, char ** argv) {
                 }
 
                 LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd).c_str());
-
+                LLAMA_LOG_INFO("embd[i]:%d\n",embd[i]);
+                LLAMA_LOG_INFO("index : %d, n_eval: %d, past:%d  eval: %s\n", i, n_eval, n_past, LOG_TOKENS_TOSTR_PRETTY(ctx, embd).c_str());
                 if (llama_decode(ctx, llama_batch_get_one(&embd[i], n_eval, n_past, 0))) {
                     LOG_TEE("%s : failed to eval\n", __func__);
                     return 1;
@@ -719,17 +725,16 @@ int main(int argc, char ** argv) {
                 n_session_consumed = session_tokens.size();
             }
         }
-
         embd.clear();
         embd_guidance.clear();
-
+        LLAMA_LOG_INFO("embd_inp.size():%d\n",embd_inp.size());
         if ((int) embd_inp.size() <= n_consumed && !is_interacting) {
             // optionally save the session on first sample (for faster prompt loading next time)
             if (!path_session.empty() && need_to_save_session && !params.prompt_cache_ro) {
                 need_to_save_session = false;
                 llama_state_save_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.size());
 
-                LOG("saved session to %s\n", path_session.c_str());
+                LLAMA_LOG_INFO("saved session to %s\n", path_session.c_str());
             }
 
             const llama_token id = llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);
@@ -749,7 +754,7 @@ int main(int argc, char ** argv) {
             LOG("n_remain: %d\n", n_remain);
         } else {
             // some user input remains from prompt or interaction, forward it to processing
-            LOG("embd_inp.size(): %d, n_consumed: %d\n", (int) embd_inp.size(), n_consumed);
+            LLAMA_LOG_INFO("embd_inp.size(): %d, n_consumed: %d\n", (int) embd_inp.size(), n_consumed);
             while ((int) embd_inp.size() > n_consumed) {
                 embd.push_back(embd_inp[n_consumed]);
 
@@ -972,6 +977,7 @@ int main(int argc, char ** argv) {
             n_remain = params.n_predict;
             is_interacting = true;
         }
+        LLAMA_LOG_INFO(">>>>>>>>>>>>>>>>>>>>>>>>\n");
     }
 
     if (!path_session.empty() && params.prompt_cache_all && !params.prompt_cache_ro) {

@@ -977,12 +977,14 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
 
     size_t cur_buf_size = 0;
     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+
+    printf("max_size: %d\n",max_size);
     for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
         size_t this_size = 0;
         if (t->data == NULL && t->view_src == NULL) {
             this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
         }
-
+        printf("this_size: %d\n",this_size);
         if (this_size > max_size) {
             fprintf(stderr, "%s: tensor %s is too large to fit in a %s buffer (tensor size: %zu, max buffer size: %zu)\n",
                     __func__, t->name,
@@ -1005,6 +1007,7 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
         } else {
             cur_buf_size += this_size;
         }
+        //printf("cur_buf_size: %d\n\n",cur_buf_size);
     }
 
     // allocate remaining tensors

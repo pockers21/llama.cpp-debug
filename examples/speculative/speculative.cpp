@@ -1,4 +1,5 @@
 #include "common.h"
+#include "llama-impl.h"
 #include "llama.h"
 
 #include <cmath>
@@ -192,9 +193,11 @@ int main(int argc, char ** argv) {
     for (int s = 0; s < n_seq_dft; ++s) {
         drafts[s].ctx_sampling = llama_sampling_init(params.sparams);
     }
+     LLAMA_LOG_INFO("params.n_ctx: \"%d\"\n",params.n_ctx);
 
     llama_batch batch_dft = llama_batch_init(params.n_ctx, 0, 1);
     llama_batch batch_tgt = llama_batch_init(params.n_ctx, 0, n_seq_dft);
+
 
     const auto t_dec_start = ggml_time_us();
 
@@ -214,7 +217,7 @@ int main(int argc, char ** argv) {
             active_seqs.insert(s);
             const auto & tokens = drafts[s].tokens;
 
-            LOG("draft %d: %s\n", s, LOG_TOKENS_TOSTR_PRETTY(ctx_dft, tokens).c_str());
+            LLAMA_LOG_INFO("draft %d: %s\n", s, LOG_TOKENS_TOSTR_PRETTY(ctx_dft, tokens).c_str());
         }
 
         int i_dft  = 0;
@@ -340,9 +343,11 @@ int main(int argc, char ** argv) {
                     // greedy verification
 
                     // sample from the target model
-                    LOG("sampling target: s_keep = %3d, i_dft = %3d, i_batch_tgt = %3d\n", s_keep, i_dft, drafts[s_keep].i_batch_tgt[i_dft]);
-                    token_id = llama_sampling_sample(ctx_sampling, ctx_tgt, NULL, drafts[s_keep].i_batch_tgt[i_dft]);
+                    LLAMA_LOG_INFO("sampling target: s_keep = %3d, i_dft = %3d, i_batch_tgt = %3d\n", s_keep, i_dft, drafts[s_keep].i_batch_tgt[i_dft]);
+                    //printf("ctx_tgt out number: %d, logits_size:%d \n", ctx_dft.t_start_us, ctx_tgt->logits_size);
 
+                    token_id = llama_sampling_sample(ctx_sampling, ctx_tgt, NULL, drafts[s_keep].i_batch_tgt[i_dft]);
+                    printf("=================llama_sampling_sample done");
                     llama_sampling_accept(ctx_sampling, ctx_tgt, token_id, true);
 
                     //LOG("last: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx_tgt, ctx_sampling->prev).c_str());
@@ -428,11 +433,13 @@ int main(int argc, char ** argv) {
 
             ++n_past_dft;
         }
-
+        LLAMA_LOG_INFO("n_predict: %d, params.n_predict:%d\n", n_predict, params.n_predict);
+        LLAMA_LOG_INFO("n_draft:%d\n", n_draft);
+        LLAMA_LOG_INFO("drafts[0].tokens[0]:%d\n", drafts[0].tokens[0]);
         if (n_predict > params.n_predict || has_eos) {
             break;
         }
-
+        exit(0);
         llama_sampling_cp(ctx_sampling, drafts[0].ctx_sampling);
 
         int n_seq_cur  = 1;

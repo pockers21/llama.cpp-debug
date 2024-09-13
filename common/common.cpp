@@ -288,6 +288,7 @@ bool gpt_params_parse_ex(int argc, char ** argv, gpt_params & params) {
         if (arg.compare(0, arg_prefix.size(), arg_prefix) == 0) {
             std::replace(arg.begin(), arg.end(), '_', '-');
         }
+        printf("*******\n");
         if (!gpt_params_find_arg(argc, argv, arg, params, i, invalid_param)) {
             throw std::invalid_argument("error: unknown argument: " + arg);
         }
@@ -367,7 +368,8 @@ bool gpt_params_find_arg(int argc, char ** argv, const std::string & arg, gpt_pa
     const char split_delim = ',';
 
     llama_sampling_params & sparams = params.sparams;
-
+    printf("==================params.n_gpu_layers:%d\n",params.n_gpu_layers);
+    
     if (arg == "-s" || arg == "--seed") {
         CHECK_ARG
         // TODO: this is temporary, in the future the sampling state will be moved fully to llama_sampling_context.
@@ -488,6 +490,7 @@ bool gpt_params_find_arg(int argc, char ** argv, const std::string & arg, gpt_pa
     }
     if (arg == "-c" || arg == "--ctx-size") {
         CHECK_ARG
+        printf("--ctx-size ===========%d, %d\n",std::stoi(argv[i]));
         params.n_ctx = std::stoi(argv[i]);
         return true;
     }
@@ -901,6 +904,7 @@ bool gpt_params_find_arg(int argc, char ** argv, const std::string & arg, gpt_pa
         }
         return true;
     }
+
     if (arg == "-ngld" || arg == "--gpu-layers-draft" || arg == "--gpu-layers-draft") {
         CHECK_ARG
         params.n_gpu_layers_draft = std::stoi(argv[i]);
@@ -1121,7 +1125,6 @@ bool gpt_params_find_arg(int argc, char ** argv, const std::string & arg, gpt_pa
     if (arg == "--version") {
         fprintf(stderr, "version: %d (%s)\n", LLAMA_BUILD_NUMBER, LLAMA_COMMIT);
         fprintf(stderr, "built with %s for %s\n", LLAMA_COMPILER, LLAMA_BUILD_TARGET);
-        exit(0);
     }
     if (arg == "--in-prefix-bos") {
         params.input_prefix_bos = true;

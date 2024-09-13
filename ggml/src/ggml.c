@@ -18123,12 +18123,12 @@ static void * incr_ptr_aligned(void ** p, size_t size, size_t align) {
 }
 
 static size_t ggml_graph_nbytes(size_t size, bool grads) {
-    printf("%s:%s:%d  size: %d\n",__FILE__, __func__, __LINE__, size);
-    printf("%s:%s:%d  alloc graph: %d\n",__FILE__, __func__, __LINE__, sizeof(struct ggml_cgraph));
+    //printf("%s:%s:%d  size: %d\n",__FILE__, __func__, __LINE__, size);
+    //printf("%s:%s:%d  alloc graph: %d\n",__FILE__, __func__, __LINE__, sizeof(struct ggml_cgraph));
     size_t hash_size = ggml_hash_size(size * 2);
     void * p = 0;
     incr_ptr_aligned(&p, sizeof(struct ggml_cgraph), 1);
-    printf("%s:%s:%d  alloc graph %d * %d bytes\n",__FILE__, __func__, __LINE__, size, sizeof(struct ggml_tensor *));
+    //printf("%s:%s:%d  alloc graph %d * %d bytes\n",__FILE__, __func__, __LINE__, size, sizeof(struct ggml_tensor *));
     incr_ptr_aligned(&p, size * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *)); // nodes
     incr_ptr_aligned(&p, size * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *)); // leafs
     incr_ptr_aligned(&p, hash_size * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *)); // hash keys

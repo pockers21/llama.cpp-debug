@@ -3341,6 +3341,7 @@ static bool llama_kv_cache_init(
     cache.v_trans   = !cache.recurrent && !cparams.flash_attn;
 
     cache.head = 0;
+    LLAMA_LOG_INFO("assign %d to size: \n", kv_size);
     cache.size = kv_size;
     cache.used = 0;
 
@@ -3386,6 +3387,7 @@ static bool llama_kv_cache_init(
         const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(i) + hparams.n_embd_v_s();
 
         struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
+        LLAMA_LOG_INFO("n_embd_k_gqa:%d, n_embd_v_gqa:%d, kv_size:%d  hparams.n_embd_k_s():%d\n",n_embd_k_gqa,n_embd_v_gqa,kv_size, hparams.n_embd_k_s());
         ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
         ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
         ggml_format_name(k, "cache_k_l%d", i);
@@ -3393,7 +3395,6 @@ static bool llama_kv_cache_init(
         cache.k_l.push_back(k);
         cache.v_l.push_back(v);
     }
-
     // allocate tensors and initialize the buffers to avoid NaNs in the padding
     for (auto it : ctx_map) {
         ggml_backend_buffer_type_t buft = it.first;
@@ -3418,10 +3419,15 @@ static bool llama_kv_cache_init(
 static bool llama_kv_cache_find_slot(
            struct llama_kv_cache & cache,
        const struct llama_ubatch & batch) {
+    LLAMA_LOG_INFO(" llama_kv_cache_find_slot *****************\n");
+    LLAMA_LOG_INFO(" cache.recurrent: %d\n",cache.recurrent);
     const uint32_t n_tokens = batch.n_tokens;
     const uint32_t n_seqs   = batch.n_seqs;
     const uint32_t n_seq_tokens = batch.n_seq_tokens;
-
+    LLAMA_LOG_INFO(" n_tokens: %d\n",n_tokens);
+    LLAMA_LOG_INFO(" n_seqs: %d\n",n_seqs);
+    LLAMA_LOG_INFO(" n_seq_tokens: %d\n",n_seq_tokens);
+    LLAMA_LOG_INFO(" cache.head: %d\n",cache.head);
     if (cache.recurrent) {
         // For recurrent state architectures (like Mamba),
         // each cache cell can store the state for a whole sequence.
@@ -3600,6 +3606,7 @@ static bool llama_kv_cache_find_slot(
 
         bool found = true;
         for (uint32_t i = 0; i < n_tokens; i++) {
+            LLAMA_LOG_INFO(" cache.cells[cache.head + i].pos: %d\n",cache.cells[cache.head + i].pos);
             if (cache.cells[cache.head + i].pos >= 0) {
                 found = false;
                 cache.head += i + 1;
@@ -3668,7 +3675,7 @@ static bool llama_kv_cache_seq_rm(
                     llama_pos   p0,
                     llama_pos   p1) {
     uint32_t new_head = cache.size;
-
+    LLAMA_LOG_INFO("*****************\n");
     if (p0 < 0) p0 = 0;
     if (p1 < 0) p1 = std::numeric_limits<llama_pos>::max();
 
@@ -3697,8 +3704,12 @@ static bool llama_kv_cache_seq_rm(
             }
         }
     }
+    LLAMA_LOG_INFO("cache.size:%d, cache.cells[0].pos:%d\n",cache.size, cache.cells[0].pos);
+    LLAMA_LOG_INFO("p0:%d, p1:%d\n",p0,p1);
 
     for (uint32_t i = 0; i < cache.size; ++i) {
+        //LLAMA_LOG_INFO("cache.cells[i].is_empty():%d\n", cache.cells[i].is_empty());
+        //LLAMA_LOG_INFO("cache.cells[i].pos : %d  cache.cells[i].has_seq_id(seq_id): %d\n", cache.cells[i].pos, cache.cells[i].has_seq_id(seq_id));
         if (cache.cells[i].pos >= p0 && cache.cells[i].pos < p1) {
             if (seq_id < 0) {
                 cache.cells[i].seq_id.clear();
@@ -3730,6 +3741,7 @@ static void llama_kv_cache_seq_cp(
                  llama_seq_id   seq_id_dst,
                     llama_pos   p0,
                     llama_pos   p1) {
+    LLAMA_LOG_INFO("*****************\n");
     if (p0 < 0) p0 = 0;
     if (p1 < 0) p1 = std::numeric_limits<llama_pos>::max();
 
@@ -3773,7 +3785,7 @@ static void llama_kv_cache_seq_cp(
 
 static void llama_kv_cache_seq_keep(struct llama_kv_cache & cache, llama_seq_id seq_id) {
     uint32_t new_head = cache.size;
-
+    LLAMA_LOG_INFO("*****************\n");
     for (uint32_t i = 0; i < cache.size; ++i) {
         if (cache.recurrent && (llama_seq_id) i != seq_id) {
             cache.cells[i].tail = -1;
@@ -3800,6 +3812,9 @@ static void llama_kv_cache_seq_add(
                     llama_pos   p0,
                     llama_pos   p1,
                     llama_pos   delta) {
+    LLAMA_LOG_INFO("*****************llama_kv_cache_seq_add cache.size:%d, cache.cells[0].pos:%d\n",cache.size, cache.cells[0].pos);
+    LLAMA_LOG_INFO("seq_id:%d, p0:%d, p1:%d\n",seq_id, p0, p1);
+    //LLAMA_LOG_INFO("cache.size:%d\n",cache.size);
     uint32_t new_head = cache.size;
 
     if (p0 < 0) p0 = 0;
@@ -3839,7 +3854,6 @@ static void llama_kv_cache_seq_add(
             }
         }
     }
-
     // If we freed up a slot, set head to it so searching can start there.
     // Otherwise we just start the next search from the beginning.
     cache.head = new_head != cache.size ? new_head : 0;
@@ -6482,6 +6496,8 @@ static bool llm_load_tensors(
     const int n_layer     = hparams.n_layer;
     const int i_gpu_start = std::max((int) hparams.n_layer - n_gpu_layers, (int) 0);
     bool use_mmap_buffer = true;
+    LLAMA_LOG_INFO(" hparams.n_layer:%d\n", hparams.n_layer);
+    LLAMA_LOG_INFO(" n_gpu_layers:%d\n", n_gpu_layers);
 
     // there is very little benefit to offloading the input layer, so always keep it on the CPU
     model.buft_input = llama_default_buffer_type_cpu(true);
@@ -6522,6 +6538,7 @@ static bool llm_load_tensors(
         int act_gpu_layers = std::min(n_gpu_layers, (int)n_layer + 1);
         for (int i = i_gpu_start; i < n_layer; ++i) {
             int layer_gpu = std::upper_bound(splits.begin(), splits.begin() + device_count, float(i - i_gpu_start)/act_gpu_layers) - splits.begin();
+            LLAMA_LOG_INFO(" layer_gpu:%d\n", layer_gpu);
             model.buft_layer[i] = llama_default_buffer_type_offload(model, layer_gpu);
         }
         // assign the output layer
@@ -8397,7 +8414,8 @@ static int llama_model_load(const std::string & fname, llama_model & model, llam
             params.n_gpu_layers = 0;
         }
 #endif
-
+        printf("==================params.tensor_split:%s\n",params.tensor_split);
+        printf("==================params.split_mode:%d\n",params.split_mode);
         if (!llm_load_tensors(
             ml, model, params.n_gpu_layers, params.split_mode,  params.main_gpu, params.tensor_split, params.use_mlock,
             params.progress_callback, params.progress_callback_user_data
@@ -15404,7 +15422,13 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
 
     const size_t logits_size = has_logits ? n_vocab*n_outputs_max : 0;
     const size_t embd_size   = has_embd   ?  n_embd*n_outputs_max : 0;
-
+//    LLAMA_LOG_INFO("n_vocab: %d\n",n_vocab);
+//    LLAMA_LOG_INFO("n_outputs_max: %d\n",n_outputs_max);
+//    LLAMA_LOG_INFO("n_embd: %d\n",n_embd);
+//    LLAMA_LOG_INFO("has_logits: %d\n",has_logits);
+//    LLAMA_LOG_INFO("has_logits: %d\n",has_embd);
+//    LLAMA_LOG_INFO("logits_size: %d\n",logits_size);
+//    LLAMA_LOG_INFO("embd_size: %d\n",embd_size);
     if (lctx.output_ids.empty()) {
         // init, never resized afterwards
         lctx.output_ids.resize(n_batch);
@@ -15414,7 +15438,7 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
     const size_t new_size  = (logits_size + embd_size) * sizeof(float);
 
     // alloc only when more than the current capacity is required
-    // TODO: also consider shrinking the buffer
+    // TODO: also consider shrinking the bufferlogits_all
     if (!lctx.buf_output || prev_size < new_size) {
         if (lctx.buf_output) {
 #ifndef NDEBUG
@@ -15566,7 +15590,7 @@ static int llama_decode_internal(
     const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
 
     lctx.embd_seq.clear();
-
+    printf("lctx.logits_all: %d\n", lctx.logits_all);
     // count outputs
     if (batch_all.logits && !embd_pooled) {
         for (uint32_t i = 0; i < n_tokens_all; ++i) {
@@ -15578,17 +15602,25 @@ static int llama_decode_internal(
         // keep last output only
         n_outputs = 1;
     }
+//    LLAMA_LOG_INFO("n_outputs: %d\n",n_outputs);
+//    LLAMA_LOG_INFO("n_tokens_all: %d\n",n_tokens_all);
+//    LLAMA_LOG_INFO("n_embd: %d\n",n_embd);
+//    LLAMA_LOG_INFO("token: %d\n",batch_all.n_tokens);
 
     lctx.sbatch.from_batch(batch_all, n_embd,
         /* simple_split */ !kv_self.recurrent,
         /* logits_all   */ n_outputs == n_tokens_all);
 
     // reserve output buffer
+    LLAMA_LOG_INFO("n_outputs: %d\n",n_outputs);
+
     if (llama_output_reserve(lctx, n_outputs) < n_outputs) {
         LLAMA_LOG_ERROR("%s: could not reserve space for batch with %u outputs\n", __func__, n_outputs);
         return -2;
     };
 
+//    LLAMA_LOG_INFO("kv_self.recurrent: %d\n",kv_self.recurrent);
+//    LLAMA_LOG_INFO("embd_pooled: %d\n",embd_pooled);
     while (lctx.sbatch.n_tokens > 0) {
         llama_ubatch ubatch;
         if (kv_self.recurrent) {
@@ -15604,7 +15636,7 @@ static int llama_decode_internal(
             ubatch = lctx.sbatch.split_simple(n_ubatch);
         }
         const uint32_t n_tokens = ubatch.n_tokens;
-
+        LLAMA_LOG_INFO("n_tokens: %d\n",n_tokens);
         // count the outputs in this u_batch
         {
             int32_t n_outputs_new = 0;
@@ -15614,10 +15646,11 @@ static int llama_decode_internal(
             } else {
                 GGML_ASSERT(ubatch.output);
                 for (uint32_t i = 0; i < n_tokens; i++) {
+                    //LLAMA_LOG_INFO("ubatch.output[i]: %d\n",ubatch.output[i]);
                     n_outputs_new += (int32_t) (ubatch.output[i] != 0);
                 }
             }
-
+            LLAMA_LOG_INFO("n_tokens: %d\n",n_outputs_new);
             // needs to happen before the graph is built
             lctx.n_outputs = n_outputs_new;
         }
@@ -17570,10 +17603,8 @@ struct llama_context * llama_new_context_with_model(
     cparams.n_ctx            = params.n_ctx           == 0    ? hparams.n_ctx_train           : params.n_ctx;
     cparams.rope_freq_base   = params.rope_freq_base  == 0.0f ? hparams.rope_freq_base_train  : params.rope_freq_base;
     cparams.rope_freq_scale  = params.rope_freq_scale == 0.0f ? hparams.rope_freq_scale_train : params.rope_freq_scale;
-
     // this is necessary due to kv_self.n being padded later during inference
     cparams.n_ctx            = GGML_PAD(cparams.n_ctx, llama_kv_cache_get_padding(cparams));
-
     // with causal attention, the batch size is limited by the context size
     cparams.n_batch          = hparams.causal_attn ? std::min(cparams.n_ctx, params.n_batch) : params.n_batch;
 
@@ -17804,13 +17835,13 @@ struct llama_context * llama_new_context_with_model(
             return nullptr;
         }
         ctx->backends.push_back(ctx->backend_cpu);
-
+        printf("cparams.offload_kqv: %d\n",cparams.offload_kqv);
         if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
             LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
             llama_free(ctx);
             return nullptr;
         }
-
+        printf("445");
         {
             size_t memory_size_k = 0;
             size_t memory_size_v = 0;
@@ -19523,7 +19554,7 @@ float * llama_get_logits(struct llama_context * ctx) {
 float * llama_get_logits_ith(struct llama_context * ctx, int32_t i) {
     int32_t j = -1;
     llama_synchronize(ctx);
-
+    LLAMA_LOG_INFO("ctx  n_outputs: %d, output_size:%d,  logits_size:%d \n", ctx->n_outputs, ctx->output_size, ctx->logits_size);
     try {
         if (ctx->logits == nullptr) {
             throw std::runtime_error("no logits");
