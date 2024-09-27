@@ -8484,6 +8484,7 @@ static struct ggml_tensor * llm_build_inp_embd(
     return inpL;
 }
 
+
 static void llm_build_kv_store(
         struct ggml_context * ctx,
         const llama_hparams & hparams,
@@ -14734,6 +14735,30 @@ static struct ggml_cgraph * llama_build_graph_k_shift(llama_context & lctx) {
     return result;
 }
 
+struct ggml_tensor * initialize_weights(struct ggml_context * ctx, const int n_in, const int n_out) {
+    struct ggml_tensor * weights = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_in, n_out);
+
+    float bound = sqrt(6.0f / n_in);
+
+    for (int i = 0; i < n_in * n_out; i++) {
+        float val = ((float)rand() / RAND_MAX) * 2 * bound - bound;
+        ggml_set_f32_1d(weights, i, val);
+    }
+
+    return weights;
+}
+
+void ggml_tensor *  initialize_bias(struct ggml_context * ctx, const int in_features, const int hidden_size) {
+    struct ggml_tensor * bias = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, hidden_size);
+    float k = 1.0f / sqrtf((float)in_features);
+    float * data = (float *)bias->data;
+    for (int i = 0; i < bias->ne[0]; i++) {
+        data[i] = ((float)rand() / RAND_MAX) * 2 * k - k;
+    }
+}
+
+
+
 static struct * build_eagle_draft_qwen2(llama_context & lctx)
 {
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, llama_model_max_nodes(model), false);
@@ -14749,6 +14774,19 @@ static struct * build_eagle_draft_qwen2(llama_context & lctx)
     struct ggml_tensor * inpL;
 
     inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+
+    cur = ggml_concat(ctx0, inpL, lctx.hidden_states, inputs_embeds->n_dims-1);
+
+    const int64_t n_embd = hparams.n_embd;
+
+    struct ggml_tensor * linear_weight = initialize_weights(ctx0, n_embd, 2*n_embd);
+
+    struct ggml_tensor * linear_bias = initialize_bias(ctx0, n_embd)
+
+    cur = ggml_mat_mul(ctx0, cur, ggml_transpose(linear_weight));
+
+    cur = ggml_add(ctx0, cur, linear_bias);
+   
 
     // inp_pos - contains the positions
     struct ggml_tensor * inp_pos = build_inp_pos();
