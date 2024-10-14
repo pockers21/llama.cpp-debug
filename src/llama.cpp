@@ -14759,7 +14759,7 @@ void ggml_tensor *  initialize_bias(struct ggml_context * ctx, const int in_feat
 
 
 
-static struct * build_eagle_draft_qwen2(llama_context & lctx)
+static struct * build_eagle_draft_qwen2()
 {
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, llama_model_max_nodes(model), false);
 
@@ -14775,7 +14775,7 @@ static struct * build_eagle_draft_qwen2(llama_context & lctx)
 
     inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
 
-    cur = ggml_concat(ctx0, inpL, lctx.hidden_states, inputs_embeds->n_dims-1);
+    cur = ggml_concat(ctx0, inpL, lctx.embd, inputs_embeds->n_dims-1);
 
     const int64_t n_embd = hparams.n_embd;
 
@@ -14786,7 +14786,8 @@ static struct * build_eagle_draft_qwen2(llama_context & lctx)
     cur = ggml_mat_mul(ctx0, cur, ggml_transpose(linear_weight));
 
     cur = ggml_add(ctx0, cur, linear_bias);
-   
+
+
 
     // inp_pos - contains the positions
     struct ggml_tensor * inp_pos = build_inp_pos();
@@ -14794,11 +14795,13 @@ static struct * build_eagle_draft_qwen2(llama_context & lctx)
     // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
     struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
 
-    for (int il = 0; il < n_layer; ++il) {
+    const int eagle_draft_model_layers = 1;
+
+    for (int il = 0; il < eagle_draft_model_layers; ++il) {
         struct ggml_tensor * inpSA = inpL;
 
         // norm
-        cur = llm_build_norm(ctx0, inpL, hparams,
+        cur = llm_build_norm(ctx0, cur, hparams,
                 model.layers[il].attn_norm, NULL,
                 LLM_NORM_RMS, cb, il);
         cb(cur, "attn_norm", il);
@@ -14874,23 +14877,6 @@ static struct * build_eagle_draft_qwen2(llama_context & lctx)
                     NULL,
                     LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
             cb(cur, "ffn_out", il);
-        } else {
-            // MoE branch
-            cur = llm_build_norm(ctx0, ffn_inp, hparams,
-                    model.layers[il].ffn_norm, NULL,
-                    LLM_NORM_RMS, cb, il);
-            cb(cur, "ffn_norm", il);
-
-            cur = llm_build_moe_ffn(ctx0, lctx, cur,
-                    model.layers[il].ffn_gate_inp,
-                    model.layers[il].ffn_up_exps,
-                    model.layers[il].ffn_gate_exps,
-                    model.layers[il].ffn_down_exps,
-                    n_expert, n_expert_used,
-                    LLM_FFN_SILU, true,
-                    false, 0.0,
-                    cb, il);
-            cb(cur, "ffn_moe_out", il);
         }
 
         cur = ggml_add(ctx0, cur, ffn_inp);
