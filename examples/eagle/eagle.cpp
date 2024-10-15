@@ -25,6 +25,7 @@ struct seq_draft {
     struct llama_sampling_context * ctx_sampling;
 };
 
+
 void llama_sample_log_softmax_impl(float* logits, size_t n_logits) {
     if (n_logits == 0) {
         return;
@@ -55,6 +56,78 @@ void llama_sample_log_softmax_impl(float* logits, size_t n_logits) {
 
     int64_t t_sample_us = ggml_time_us() - t_start_sample_us;
     std::cout << "Time taken: " << t_sample_us << " microseconds" << std::endl;
+}
+
+void get_topk(  const float* probs,
+                const int seq_len,
+                const int vocab_size,
+                int top_k,
+                std::vector<int>& indices,
+                std::vector<float>& values) {
+    // 清空输出 vector
+    indices.clear();
+    values.clear();
+
+    // 预分配内存
+    indices.reserve(seq_len * top_k);
+    values.reserve(seq_len * top_k);
+    for(size_t i = 0; i < seq_len; i++) {
+        std::vector<std::pair<int, float>> candidates(vocab_size);
+        for (int j = 0; j < vocab_size; ++j) {
+            candidates[j] = {j, probs[j + i*vocab_size]};
+        }
+
+        // 部分排序，选出前top_k个最大的元素
+        std::partial_sort(
+            candidates.begin(),
+            candidates.begin() + top_k,
+            candidates.end(),
+            [](const auto& a, const auto& b) {
+                return a.second > b.second;  // 比较浮点数值
+            }
+        );
+
+        // 填充结果
+        for (int i = 0; i < top_k; ++i) {
+            indices.push_back(candidates[i].first);
+            values.push_back(candidates[i].second);
+        }
+    }
+
+}
+
+std::vector<float> create_eye_tensor(int64_t top_k) {
+    std::vector<float> result(top_k * top_k, 0.0f);
+
+    for (int64_t i = 0; i < top_k; ++i) {
+        result[i * top_k + i] = 1.0f;
+    }
+
+    return result;
+}
+
+int calulate_bias(const int index, const int topk){
+    int bias1 = bias2 = 0;
+    if(index > 0){
+        bias1 = topk;
+    }
+    bias = std::max(0, index - 1);
+    return 1 + topk * topk * bias2 + bias1;
+}
+
+template<typename T>
+void flatten_2d_vector(const vector<T>& orgin_vectors,
+                       const std::vector<std::vector<T>>& flatted_vector) {
+    std::vector<float> flattened;
+
+    size_t total_size = std::accumulate(orgin_vectors.begin(), orgin_vectors.end(), 0,
+        [](size_t sum, const std::vector<float>& inner) { return sum + inner.size(); });
+
+    flatted_vector.reserve(total_size);
+
+    for (const auto& inner_vec : orgin_vectors) {
+        flatted_vector.insert(flatted_vector.end(), inner_vec.begin(), inner_vec.end());
+    }
 }
 
 int main(int argc, char ** argv) {
@@ -188,10 +261,6 @@ int main(int argc, char ** argv) {
 
     const auto t_enc_start = ggml_time_us();
 
-
-
-
-
     const auto t_enc_end = ggml_time_us();
 
     // the 2 models should have the same vocab
@@ -200,9 +269,6 @@ int main(int argc, char ** argv) {
     // how many tokens to draft each time
     int n_draft = params.n_draft;
 
-
-    int n_past_tgt = inp.size();
-    int n_past_dft = inp.size();
 
     // used to determine end of generation
     bool has_eos = false;
@@ -232,32 +298,188 @@ int main(int argc, char ** argv) {
     const int top_k = 10;
     const int threshold = 1.0
     const int max_new_tokens = 512;
+
     // TODO assume logits processor is None
     // eval the prompt with both models
     //TODO llama.cpp only allow output logits or hidden_states, we should output both
     //turn on logits_all switch, n_outputs will be setted to n_tokens_all
     llama_decode(ctx_tgt, llama_batch_get_one( inp.data(), n_input , 0, 0));
-
-
+    float * target_model_logits = ctx_tgt.logits;
+    float * target_model_embd = ctx_tgt.embd;
 
 
     //TODO add sample procedure
     const int sampled_token_id = 0;
 
-    int n_past_tgt = inp.size();
     inp.push_back(sampled_token_id);
     inp.erase(inp.begin());
+
     //draft model input consist embedding data, so should be inited by llama_batch_init
     //after llama_batch_init, batch_dft.logits and batch_dft.embd would be placed with logits and hidden states generated from target model
-    llama_bacth batch_dft = llama_batch_init(n_input, 1, 1);
-    llama_decode(ctx_dft, batch_dft);
-    const float * logits = ctx_dft.logits;
-    const float * embd = ctx_dft.embd;
+    const int hidden_dim =  ctx_dft.model->hparams.n_embd;
+    llama_bacth batch_dft = llama_batch_init(n_input, hidden_dim, 1);
+    int n_past_dft = 0;
+    //assign input ids  to batch_dft
+    for (size_t i = 0; i < n_input; ++i) {
+        llama_batch_add(batch_dft, inp[i], n_past_dft++, { 0 }, true);
+    }
+    //assign hidden_states to batch_dft
+    std::copy(target_model_embd，target_model_embd + n_input * hidden_dim, batch_dft.embd);
 
-    //
+
+    llama_decode(ctx_dft, batch_dft);
+    float * draft_logits = ctx_dft.logits;
+    float * draft_embd = ctx_dft.embd;
+    const int vocab_size = ctx_dft.model->hparams.n_vocab
+
     std::vector<std::vector<float>> scores_list；
     std::vector<std::vector<int>> parents_list；
-    std::vector<std::vector<int>> topk_tokens_list；
+    std::vector<std::vector<int>> ss_token；
+
+    //last_p = self.logsoftmax(last_headout)
+    const int last_logits_bias = (n_input - 1) * vocab_size;
+    const float * last_logits = draft_logits + last_logits_bias;
+    llama_sample_log_softmax_impl(last_logits, vocab_size);
+
+    std::vector<int> topk_indices;
+    std::vector<float> topk_values;
+    get_topk(last_logits, 1, vocab_size, top_k, topk_indices, topk_values);
+    ss_token.append(topk_indices);
+
+    //after topk select, topk_indices would be new input_ids
+    for (size_t i = 0; i < indices.size(); ++i) {
+        std::cout << "Index: " << indices[i]
+                  << ", Value: " << values[i] << std::endl;
+    }
+
+
+
+    std::vector<float> scores  = topk_values;
+    scores_list.push_back(scores);
+
+    //
+    parents_list.push_back(std::vector<int>(1，1));
+
+    vector<float> repeatted_hidden_states(top_k *  hidden_dim);
+
+    //copy last dimension of hidden_states to repeatted_hidden_states and repeat it
+    size_t last_batch_start = (n_input - 1) * hidden_dim;
+    std::copy(draft_embd + last_batch_start, draft_embd + last_batch_start + hidden_dim, repeatted_hidden_states.begin());
+    for (int i = 1; i < top_k; ++i) {
+        std::copy(repeatted_hidden_states.begin(), repeatted_hidden_states.begin() + hidden_dim,
+                  repeatted_hidden_states.begin() + i * hidden_dim);
+    }
+    vector<int32_t> origin_tree_mask = create_eye_tensor(top_k);
+    vector<int32_t> tree_mask = origin_tree_mask;
+
+
+    std::vector<int32_t> topk_cs_index(top_k);
+    std::generate(topk_cs_index.begin(), topk_cs_index.end(), [&i]() { return i++; });
+
+
+    std::vector<int32_t> position_ids(top_k, 0);
+    vector<int> inputs_ids = topk_indices;
+
+    for(size_t i = 0; i < depth; i ++) {
+        llama_bacth batch_dft = llama_batch_init(top_k, hidden_dim, 1);
+        //assign input ids  to batch_dft
+        for (size_t i = 0; i < top_k; ++i) {
+            llama_batch_add(batch_dft, inputs_ids[i], n_past_dft++, { 0 }, true);
+        }
+        //assign repeatted hidden_states to batch_dft
+        std::copy(repeatted_hidden_states，repeatted_hidden_states + top_k * hidden_dim, batch_dft.embd);
+        llama_decode(ctx_dft, batch_dft);
+
+        int bias = calulate_bias(i, top_k);
+
+        std::vector<int32_t> parents = topk_cs_index;
+        std::for_each(parents.begin(), parents.end(), [](int& x) { x += bias; });
+        parents_list.push_back(parents);
+
+        float * draft_logits = ctx_dft.logits;
+        float * draft_embd = ctx_dft.embd;
+        for(size_t i = 0; i < top_k; i ++){
+            llama_sample_log_softmax_impl(draft_logits + (i * vocab_size), vocab_size);
+        }
+
+
+        std::vector<int> topk_indices;
+        std::vector<float> topk_values;
+        get_topk(draft_logits, top_k, vocab_size, top_k, topk_indices, topk_values);
+
+        //cu_scores = topk_p + scores[:, None]
+        vector<float> cur_scores(top_k * top_k, 0);
+        for(size_t index = 0; index < top_k; index ++){
+            auto start_pos = cur_scores.begin() + index * top_k;
+            auto end_pos = cur_scores.begin() + (index + 1) * top_k;
+            std::for_each(start_pos, end_pos,
+              [scores[index]](int& element) { element += scores[index]; });
+        }
+
+        std::vector<int> topk_cs_indices;
+        std::vector<float> topk_cs_values;
+        get_topk(&cur_scores[0], 1, top_k, top_k, topk_cs_indices, topk_cs_values);
+        scores = topk_cs_values;
+
+        vector<int> out_ids(top_k);
+        std::for_each(out_ids.begin(), out_ids.end(),
+              [top_k](int& element) { element /= top_k; });
+
+        for(size_t index = 0; index < top_k; index ++){
+            auto element = out_ids[index];
+            auto src_start_pos = draft_embd + (element * hidden_dim)
+            auto src_end_pos = draft_embd + ((element + 1) * hidden_dim)
+            auto dst_start_pos = repeatted_hidden_states.begin() + (index * hidden_dim);
+            std::copy(src_start_pos, src_end_pos, hidden_dim, dst_start_pos);
+        }
+
+        for(size_t index = 0; index < top_k; index ++){
+            auto topk_cs_indices_value = topk_cs_indices[index];
+            auto element = topk_indices[topk_cs_indices_value];
+            inputs_ids.clear();
+            inputs_ids.push_back(element);
+        }
+
+        ss_token.append(topk_indices);
+        scores_list.append(cur_scores);
+
+        //translate tree_mask = torch.cat((tree_mask[:, :, out_ids], self.tree_mask_init), dim=3)
+        const current_expanded_tree_mask_cols = (i+2)*top_k
+        const current_expanded_tree_mask_concat_offset = (i+1)*top_k
+        vector <int32_t> expanded_tree_mask(top_k, current_expanded_tree_mask_cols);
+        for(size_t index = 0; index < top_k; index ++){
+            auto element = out_ids[index];
+            auto src_start_pos = tree_mask.begin() + element*top_k
+            auto src_end_pos = tree_mask.begin() + (element+1)*top_k
+            auto dst_start_pos = expanded_tree_mask.begin() + (index * current_expanded_tree_mask_cols);
+            std::copy(src_start_pos, src_end_pos, top_k, dst_start_pos);
+
+            src_start_pos = tree_mask.begin() + index*top_k
+            src_end_pos = tree_mask.begin() + (index+1)*top_k
+            dst_start_pos = expanded_tree_mask.begin() + (index * current_expanded_tree_mask_concat_offset);
+            std::copy(src_start_pos, src_end_pos, top_k, dst_start_pos);
+        }
+
+    //flatten scores_list
+    vector<float> flatted_score_list;
+    flatten_2d_vector(scores_list, flatted_score_list);
+
+    //flatten ss_token_list
+    vector<int> flatted_ss_token;
+    flatten_2d_vector(ss_token, flatted_ss_token);
+
+    std::vector<int> topk_scores_indices;
+    std::vector<float> topk_scores_values;
+    get_topk(&flatted_score_list[0], 1, top_k, top_k, topk_scores_indices, topk_scores_values);
+    std::sort(topk_scores_indices.begin(), topk_scores_indices.end());
+
+    vector<int> draft_tokens;
+    std::for_each(topk_scores_indices.begin(), topk_scores_indices.end(),
+              [draft_tokens](int& element) { draft_tokens.push_back(element); });
+
+    topk_scores_indices.insert(topk_scores_indices.begin(), sampled_token_id);
+    
+
 
     const auto t_dec_start = ggml_time_us();
 
