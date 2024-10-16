@@ -88,7 +88,12 @@ class Model:
             self.part_names = Model.get_model_part_names(self.dir_model, "pytorch_model", ".bin")
         self.hparams = Model.load_hparams(self.dir_model)
         self.block_count = self.find_hparam(["n_layers", "num_hidden_layers", "n_layer", "num_layers"])
+        print(f'model_arch: {self.model_arch}')
+
         self.tensor_map = gguf.get_tensor_name_map(self.model_arch, self.block_count)
+
+        print(f'self.tensor_map: {self.tensor_map}')
+
         self.tensor_names = None
         self.metadata_override = metadata_override
         self.model_name = model_name
@@ -129,6 +134,7 @@ class Model:
         self._set_vocab_gpt2()
 
     def get_tensors(self) -> Iterator[tuple[str, Tensor]]:
+
         tensor_names_from_parts: set[str] = set()
 
         if len(self.part_names) > 1:
@@ -146,6 +152,7 @@ class Model:
             self.tensor_names = tensor_names_from_parts
 
         for part_name in self.part_names:
+
             logger.info(f"gguf: loading model part '{part_name}'")
             ctx: ContextManager[Any]
             if self.is_safetensors:
@@ -154,8 +161,14 @@ class Model:
             else:
                 ctx = contextlib.nullcontext(torch.load(str(self.dir_model / part_name), map_location="cpu", mmap=True, weights_only=True))
 
+            print(f'part_name: {part_name}')
+
+            print(f'str(self.dir_model / part_name): {str(self.dir_model / part_name)}')
             with ctx as model_part:
+                #print(f'model_part.keys(): {model_part.keys()}')
+
                 tensor_names_from_parts.update(model_part.keys())
+                print(f'model_part.keys(): {model_part.keys()}')
 
                 for name in model_part.keys():
                     if self.is_safetensors:
@@ -168,6 +181,7 @@ class Model:
                         data = model_part[name]
                         if self.lazy:
                             data = LazyTorchTensor.from_eager(data)
+
                     yield name, data
 
         # only verify tensor name presence; it doesn't matter if they are not in the right files
@@ -197,9 +211,14 @@ class Model:
         return name == (key_name + suffix)
 
     def map_tensor_name(self, name: str, try_suffixes: Sequence[str] = (".weight", ".bias")) -> str:
+        if name.__contains__('q_projs'):
+            print(f'name: {name}')
+            #print(f'self.tensor_map: {self.tensor_map}')
+        #name = "model." + name
         new_name = self.tensor_map.get_name(key=name, try_suffixes=try_suffixes)
         if new_name is None:
             raise ValueError(f"Can not map tensor {name!r}")
+        print(f'get {name} from map success, new name:{new_name}  try_suffixes:{try_suffixes} ')
         return new_name
 
     def set_gguf_parameters(self):
@@ -262,10 +281,11 @@ class Model:
         max_name_len = max(len(s) for _, s in self.tensor_map.mapping.values()) + len(".weight,")
 
         for name, data_torch in self.get_tensors():
+
             # we don't need these
             if name.endswith((".attention.masked_bias", ".attention.bias", ".rotary_emb.inv_freq")):
                 continue
-
+            print(f'name: {name}, data_torch:{data_torch}')
             old_dtype = data_torch.dtype
 
             # convert any unsupported data types to float32
@@ -1867,6 +1887,15 @@ class Qwen2Model(Model):
         except FileNotFoundError:
             self._set_vocab_gpt2()
 
+@Model.register("Qwen2DraftForCausalLM")
+class Qwen2Model(Model):
+    model_arch = gguf.MODEL_ARCH.EAGLE_DRAFT
+
+    def set_vocab(self):
+        try:
+            self._set_vocab_sentencepiece()
+        except FileNotFoundError:
+            self._set_vocab_gpt2()
 
 @Model.register("Qwen2MoeForCausalLM")
 class Qwen2MoeModel(Model):
@@ -4037,6 +4066,7 @@ def main() -> None:
     with torch.inference_mode():
         output_type = ftype_map[args.outtype]
         model_architecture = hparams["architectures"][0]
+        print(model_architecture)
 
         try:
             model_class = Model.from_model_architecture(model_architecture)

@@ -196,6 +196,7 @@ class MODEL_ARCH(IntEnum):
     STABLELM     = auto()
     QWEN         = auto()
     QWEN2        = auto()
+    EAGLE_DRAFT    = auto()
     QWEN2MOE     = auto()
     PHI2         = auto()
     PHI3         = auto()
@@ -229,6 +230,7 @@ class MODEL_TENSOR(IntEnum):
     TOKEN_EMBD_NORM      = auto()
     TOKEN_TYPES          = auto()
     POS_EMBD             = auto()
+    FC                   = auto()
     OUTPUT               = auto()
     OUTPUT_NORM          = auto()
     ROPE_FREQS           = auto()
@@ -326,6 +328,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.STABLELM:       "stablelm",
     MODEL_ARCH.QWEN:           "qwen",
     MODEL_ARCH.QWEN2:          "qwen2",
+    MODEL_ARCH.EAGLE_DRAFT:    "eagle-draft",
     MODEL_ARCH.QWEN2MOE:       "qwen2moe",
     MODEL_ARCH.PHI2:           "phi2",
     MODEL_ARCH.PHI3:           "phi3",
@@ -359,6 +362,7 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.TOKEN_EMBD_NORM:      "token_embd_norm",
     MODEL_TENSOR.TOKEN_TYPES:          "token_types",
     MODEL_TENSOR.POS_EMBD:             "position_embd",
+    MODEL_TENSOR.FC:                   "fc",
     MODEL_TENSOR.OUTPUT_NORM:          "output_norm",
     MODEL_TENSOR.OUTPUT:               "output",
     MODEL_TENSOR.ROPE_FREQS:           "rope_freqs",
@@ -665,6 +669,19 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.TOKEN_EMBD,
         MODEL_TENSOR.OUTPUT_NORM,
         MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_K,
+        MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.FFN_NORM,
+        MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+    ],
+    MODEL_ARCH.EAGLE_DRAFT: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.FC,
         MODEL_TENSOR.ATTN_NORM,
         MODEL_TENSOR.ATTN_Q,
         MODEL_TENSOR.ATTN_K,

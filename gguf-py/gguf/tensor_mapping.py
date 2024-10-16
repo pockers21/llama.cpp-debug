@@ -48,7 +48,9 @@ class TensorNameMap:
             "embeddings.position_embeddings",  # bert
             "wpe",                             # gpt2
         ),
-
+        MODEL_TENSOR.FC: (
+            "model.fc",                 # draft model
+        ),
         # Output
         MODEL_TENSOR.OUTPUT: (
             "embed_out",                 # gptneox
@@ -616,6 +618,9 @@ class TensorNameMap:
                 for key in keys:
                     key = key.format(bid = bid)
                     self.mapping[key] = (tensor, tensor_name)
+        print(f'arch: {arch}')
+        #print(f'self.mapping: {self.mapping}')
+
 
     def get_type_and_name(self, key: str, try_suffixes: Sequence[str] = ()) -> tuple[MODEL_TENSOR, str] | None:
         result = self.mapping.get(key)
@@ -654,4 +659,6 @@ class TensorNameMap:
 
 
 def get_tensor_name_map(arch: MODEL_ARCH, n_blocks: int) -> TensorNameMap:
+    print(f'arch: {arch}')
+    
     return TensorNameMap(arch, n_blocks)
