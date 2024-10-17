@@ -8,6 +8,7 @@ BUILD_TARGETS = \
 	llama-benchmark-matmult \
 	llama-cli \
 	llama-convert-llama2c-to-ggml \
+	llama-eagle \
 	llama-embedding \
 	llama-eval-callback \
 	llama-export-lora \
@@ -1282,6 +1283,11 @@ llama-perplexity: examples/perplexity/perplexity.cpp \
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
 llama-imatrix: examples/imatrix/imatrix.cpp \
+	$(OBJ_ALL)
+	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
+	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
+
+llama-eagle: examples/eagle/eagle.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 #include <set>
-
+using namespace std;
 #define SPEC_VOCAB_MAX_SIZE_DIFFERENCE  100
 #define SPEC_VOCAB_CHECK_START_TOKEN_ID 5
 
@@ -15,7 +15,7 @@ struct TopkGenerateRes {
     vector<int> draft_tokens;
     vector<long> retrieve_indices;
     vector<bool> ret_tree_mask;
-    vector<int> tree_position_ids
+    vector<int> tree_position_ids;
 };
 
 struct seq_draft {
@@ -89,7 +89,7 @@ void get_topk(  const float* probs,
             candidates.begin(),
             candidates.begin() + top_k,
             candidates.end(),
-            [](const auto& a, const auto& b) {
+            [](const std::pair<int, float>& a, const std::pair<int, float>& b) {
                 return a.second > b.second;  // 比较浮点数值
             }
         );
@@ -115,21 +115,21 @@ std::vector<T> create_eye_tensor(int64_t top_k) {
 }
 
 int calulate_bias(const int index, const int topk){
-    int bias1 = bias2 = 0;
+    int bias1 = 0;
+    int bias2 = 0;
     if(index > 0){
         bias1 = topk;
     }
-    bias = std::max(0, index - 1);
+    int bias = std::max(0, index - 1);
     return 1 + topk * topk * bias2 + bias1;
 }
 
 template<typename T>
-void flatten_2d_vector(const vector<T>& orgin_vectors,
-                       const std::vector<std::vector<T>>& flatted_vector) {
-    std::vector<float> flattened;
+void flatten_2d_vector(const std::vector<std::vector<T>>& orgin_vectors,
+                       vector<T>& flatted_vector) {
 
     size_t total_size = std::accumulate(orgin_vectors.begin(), orgin_vectors.end(), 0,
-        [](size_t sum, const std::vector<float>& inner) { return sum + inner.size(); });
+        [](size_t sum, const std::vector<T>& inner) { return sum + inner.size(); });
 
     flatted_vector.reserve(total_size);
 
@@ -139,8 +139,9 @@ void flatten_2d_vector(const vector<T>& orgin_vectors,
 }
 
 // Function to perform searchsorted equivalent using std::lower_bound
-std::vector<size_t> searchsorted(const std::vector<int>& sorted_vec, const std::vector<int>& query, bool right = false) {
-    std::vector<size_t> indices;
+template<typename T>
+std::vector<int> searchsorted(const std::vector<T>& sorted_vec, const std::vector<T>& query, bool right = false) {
+    std::vector<int> indices;
     indices.reserve(query.size());
 
     for (const auto& val : query) {
@@ -156,49 +157,55 @@ std::vector<size_t> searchsorted(const std::vector<int>& sorted_vec, const std::
 }
 
 TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
-                       const llama_context * ctx_dft,
+                       llama_context * ctx_tgt,
+                       llama_context * ctx_dft,
                        const int total_tokens,
                        const int depth,
-                       const int top_k) {
+                       const int top_k,
+                       const int sampled_token_id) {
     inp.erase(inp.begin());
 
     //draft model input consist embedding data, so should be inited by llama_batch_init
     //after llama_batch_init, batch_dft.logits and batch_dft.embd would be placed with logits and hidden states generated from target model
-    const int hidden_dim =  ctx_dft.model->hparams.n_embd;
+    auto dft_model = llama_get_model(ctx_dft);
+
+    const int hidden_dim = llama_n_embd(dft_model);
     const int n_input = inp.size();
-    llama_bacth batch_dft = llama_batch_init(n_input, hidden_dim, 1);
+    llama_batch batch_dft = llama_batch_init(n_input, hidden_dim, 1);
     int n_past_dft = 0;
     //assign input ids  to batch_dft
     for (size_t i = 0; i < n_input; ++i) {
         llama_batch_add(batch_dft, inp[i], n_past_dft++, { 0 }, true);
     }
+
+    float * target_model_embd = llama_get_embeddings(ctx_tgt);
     //assign hidden_states to batch_dft
-    std::copy(target_model_embd，target_model_embd + n_input * hidden_dim, batch_dft.embd);
+    std::copy(target_model_embd, target_model_embd + n_input * hidden_dim, batch_dft.embd);
 
 
     llama_decode(ctx_dft, batch_dft);
-    float * draft_logits = ctx_dft.logits;
-    float * draft_embd = ctx_dft.embd;
-    const int vocab_size = ctx_dft.model->hparams.n_vocab
+    float * draft_logits = llama_get_logits(ctx_dft);
+    float * draft_embd = llama_get_embeddings(ctx_dft);
+    const int vocab_size = llama_n_vocab(dft_model);
 
-    std::vector<std::vector<float>> scores_list；
-    std::vector<std::vector<int>> parents_list；
-    std::vector<std::vector<int>> ss_token；
+    std::vector<std::vector<float>> scores_list;
+    std::vector<std::vector<int>> parents_list;
+    std::vector<std::vector<int>> ss_token;
 
     //last_p = self.logsoftmax(last_headout)
     const int last_logits_bias = (n_input - 1) * vocab_size;
-    const float * last_logits = draft_logits + last_logits_bias;
+    float * last_logits = draft_logits + last_logits_bias;
     llama_sample_log_softmax_impl(last_logits, vocab_size);
 
     std::vector<int> topk_indices;
     std::vector<float> topk_values;
     get_topk(last_logits, 1, vocab_size, top_k, topk_indices, topk_values);
-    ss_token.append(topk_indices);
+    ss_token.push_back(topk_indices);
 
     //after topk select, topk_indices would be new input_ids
-    for (size_t i = 0; i < indices.size(); ++i) {
-        std::cout << "Index: " << indices[i]
-                  << ", Value: " << values[i] << std::endl;
+    for (size_t i = 0; i < topk_indices.size(); ++i) {
+        std::cout << "Index: " << topk_indices[i]
+                  <<  std::endl;
     }
 
 
@@ -207,7 +214,7 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
     scores_list.push_back(scores);
 
     //
-    parents_list.push_back(std::vector<int>(1，1));
+    parents_list.push_back(std::vector<int>(1,1));
 
     vector<float> repeatted_hidden_states(top_k *  hidden_dim);
 
@@ -218,35 +225,35 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
         std::copy(repeatted_hidden_states.begin(), repeatted_hidden_states.begin() + hidden_dim,
                   repeatted_hidden_states.begin() + i * hidden_dim);
     }
-    vector<int32_t> origin_tree_mask = create_eye_tensor(top_k);
+    vector<int32_t> origin_tree_mask = create_eye_tensor<int32_t>(top_k);
     vector<int32_t> tree_mask = origin_tree_mask;
 
 
     std::vector<int32_t> topk_cs_index(top_k);
-    std::generate(topk_cs_index.begin(), topk_cs_index.end(), [&i]() { return i++; });
-
+    std::for_each(topk_cs_index.begin(), topk_cs_index.end(), [](int& x) { x += 1; });
 
     std::vector<int32_t> position_ids(top_k, 0);
     vector<int> inputs_ids = topk_indices;
 
     for(size_t i = 0; i < depth; i ++) {
-        llama_bacth batch_dft = llama_batch_init(top_k, hidden_dim, 1);
+        llama_batch batch_dft = llama_batch_init(top_k, hidden_dim, 1);
         //assign input ids  to batch_dft
         for (size_t i = 0; i < top_k; ++i) {
             llama_batch_add(batch_dft, inputs_ids[i], n_past_dft++, { 0 }, true);
         }
         //assign repeatted hidden_states to batch_dft
-        std::copy(repeatted_hidden_states，repeatted_hidden_states + top_k * hidden_dim, batch_dft.embd);
+        std::copy(repeatted_hidden_states.begin(), repeatted_hidden_states.begin() + top_k * hidden_dim, batch_dft.embd);
         llama_decode(ctx_dft, batch_dft);
 
         int bias = calulate_bias(i, top_k);
 
         std::vector<int32_t> parents = topk_cs_index;
-        std::for_each(parents.begin(), parents.end(), [](int& x) { x += bias; });
+        std::for_each(parents.begin(), parents.end(), [bias](int& x) { x += bias; });
         parents_list.push_back(parents);
 
-        float * draft_logits = ctx_dft.logits;
-        float * draft_embd = ctx_dft.embd;
+        float * draft_logits = llama_get_logits(ctx_dft);
+        float * draft_embd = llama_get_embeddings(ctx_dft);
+
         for(size_t i = 0; i < top_k; i ++){
             llama_sample_log_softmax_impl(draft_logits + (i * vocab_size), vocab_size);
         }
@@ -262,8 +269,8 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
         for(size_t index = 0; index < top_k; index ++){
             auto start_pos = cur_scores.begin() + index * top_k;
             auto end_pos = cur_scores.begin() + (index + 1) * top_k;
-            std::for_each(start_pos, end_pos,
-              [scores[index]](int& element) { element += scores[index]; });
+            auto score = scores[index];
+            std::for_each(start_pos, end_pos,  [score](float& element) { element += score; });
         }
 
         std::vector<int> topk_cs_indices;
@@ -277,10 +284,10 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
 
         for(size_t index = 0; index < top_k; index ++){
             auto element = out_ids[index];
-            auto src_start_pos = draft_embd + (element * hidden_dim)
-            auto src_end_pos = draft_embd + ((element + 1) * hidden_dim)
+            auto src_start_pos = draft_embd + (element * hidden_dim);
+            auto src_end_pos = draft_embd + ((element + 1) * hidden_dim);
             auto dst_start_pos = repeatted_hidden_states.begin() + (index * hidden_dim);
-            std::copy(src_start_pos, src_end_pos, hidden_dim, dst_start_pos);
+            std::copy(src_start_pos, src_end_pos, dst_start_pos);
         }
 
         for(size_t index = 0; index < top_k; index ++){
@@ -290,33 +297,33 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
             inputs_ids.push_back(element);
         }
 
-        ss_token.append(topk_indices);
-        scores_list.append(cur_scores);
+        ss_token.push_back(topk_indices);
+        scores_list.push_back(cur_scores);
 
         //translate tree_mask = torch.cat((tree_mask[:, :, out_ids], self.tree_mask_init), dim=3)
-        const current_expanded_tree_mask_cols = (i+2)*top_k
-        const current_expanded_tree_mask_concat_offset = (i+1)*top_k
+        const int current_expanded_tree_mask_cols = (i+2)*top_k;
+        const int current_expanded_tree_mask_concat_offset = (i+1)*top_k;
         vector <int32_t> expanded_tree_mask(top_k, current_expanded_tree_mask_cols);
         for(size_t index = 0; index < top_k; index ++){
             auto element = out_ids[index];
-            auto src_start_pos = tree_mask.begin() + element*top_k
-            auto src_end_pos = tree_mask.begin() + (element+1)*top_k
+            auto src_start_pos = tree_mask.begin() + element*top_k;
+            auto src_end_pos = tree_mask.begin() + (element+1)*top_k;
             auto dst_start_pos = expanded_tree_mask.begin() + (index * current_expanded_tree_mask_cols);
-            std::copy(src_start_pos, src_end_pos, top_k, dst_start_pos);
+            std::copy(src_start_pos, src_end_pos, dst_start_pos);
 
-            src_start_pos = tree_mask.begin() + index*top_k
-            src_end_pos = tree_mask.begin() + (index+1)*top_k
+            src_start_pos = tree_mask.begin() + index*top_k;
+            src_end_pos = tree_mask.begin() + (index+1)*top_k;
             dst_start_pos = expanded_tree_mask.begin() + (index * current_expanded_tree_mask_concat_offset);
-            std::copy(src_start_pos, src_end_pos, top_k, dst_start_pos);
+            std::copy(src_start_pos, src_end_pos, dst_start_pos);
         }
     }
     //flatten scores_list
     vector<float> flatted_score_list;
-    flatten_2d_vector(scores_list, flatted_score_list);
+    flatten_2d_vector<float>(scores_list, flatted_score_list);
 
     //flatten ss_token_list
     vector<int> ss_token_list;
-    flatten_2d_vector(ss_token, ss_token_list);
+    flatten_2d_vector<int>(ss_token, ss_token_list);
 
     std::vector<int> topk_scores_index;
     std::vector<float> topk_scores_values;
@@ -344,7 +351,7 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
     std::for_each(draft_parents_for_insert.begin(), draft_parents_for_insert.end(),
               [](int& element) { element -= 1; });
 
-    vector <int> mask_index = searchsorted(topk_scores_index, draft_parents_for_insert);
+    vector <int> mask_index = searchsorted<int>(topk_scores_index, draft_parents_for_insert);
     for(size_t i = 0; i < total_tokens; i ++){
         auto draft_parents_value = draft_parents[i];
         if(0 == draft_parents_value) {
@@ -364,7 +371,7 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
         auto src_first_begin = ret_tree_mask.begin() + (i+1) * (total_tokens + 1);
         auto src_first_end = ret_tree_mask.begin() + (i+2) * (total_tokens + 1);
         auto src_second_begin = ret_tree_mask.begin() + mask_index_value * (total_tokens + 1);
-        auto dst = src_first;
+        auto dst = src_first_begin;
         std::transform(src_first_begin, src_first_end, src_second_begin, dst,
                    [](int a, int b) { return a + b; });
 
@@ -378,26 +385,28 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
         tree_position_ids.push_back(sum);
     }
 
-    const int max_depth = *(std::max_element(vec.begin(), vec.end())) + 1;
+    const int max_depth = *(std::max_element(tree_position_ids.begin(), tree_position_ids.end())) + 1;
     auto last = std::unique(mask_index.begin(), mask_index.end());
     std::vector<int> noleaf_index(mask_index.begin(), last);
-    const noleaf_num = len(noleaf_index) - 1;
-    const leaf_num = total_tokens - noleaf_num;
+    const int noleaf_num = noleaf_index.size() - 1;
+    const int leaf_num = total_tokens - noleaf_num;
 
     std::vector<long> retrieve_indices(leaf_num*max_depth, -1);
 
     int rid = 0;
     for (int i = 0; i <= total_tokens; ++i) {
-    if (std::find(noleaf_index.begin(), noleaf_index.end(), i) == noleaf_index.end()) {
-        int cid = i;
-        int depth = position_ids_list[i];
-        for (int j = depth; j >= 0; --j) {
-            retrieve_indices[rid][j] = cid;
-            if (cid > 0) {
-                cid = mask_index_list[cid - 1];
+        if (std::find(noleaf_index.begin(), noleaf_index.end(), i) == noleaf_index.end()) {
+            int cid = i;
+            int depth = tree_position_ids[i];
+            for (int j = depth; j >= 0; --j) {
+                const int index = rid * max_depth + j;
+                retrieve_indices[index] = cid;
+                if (cid > 0) {
+                    cid = mask_index[cid - 1];
+                }
             }
+            ++rid;
         }
-        ++rid;
     }
 
     //TODO
@@ -414,8 +423,8 @@ TopkGenerateRes topk_generate(std::vector<llama_token>& inp,
 
             retrieve_indices = sorted(retrieve_indices, key=custom_sort)
     */
-    }
-    TopkGenerateRes res;
+
+    struct TopkGenerateRes res;
     res.draft_tokens = draft_tokens;
     res.retrieve_indices = retrieve_indices;
     res.ret_tree_mask = ret_tree_mask;
@@ -480,6 +489,7 @@ int main(int argc, char ** argv) {
     llama_init_result llama_init_dft = llama_init_from_gpt_params(params);
     model_dft = llama_init_dft.model;
     ctx_dft = llama_init_dft.context;
+
 
     const bool vocab_type_tgt = llama_vocab_type(model_tgt);
     LOG("vocab_type tgt: %d\n", vocab_type_tgt);
@@ -592,7 +602,7 @@ int main(int argc, char ** argv) {
     const int total_tokens  = 59;
     const int depth = 5;
     const int top_k = 10;
-    const int threshold = 1.0
+    const int threshold = 1.0;
     const int max_new_tokens = 512;
 
     // TODO assume logits processor is None
@@ -600,17 +610,17 @@ int main(int argc, char ** argv) {
     //TODO llama.cpp only allow output logits or hidden_states, we should output both
     //turn on logits_all switch, n_outputs will be setted to n_tokens_all
     llama_decode(ctx_tgt, llama_batch_get_one( inp.data(), n_input , 0, 0));
-    float * target_model_logits = ctx_tgt.logits;
-    float * target_model_embd = ctx_tgt.embd;
 
+    float * target_model_logits = llama_get_logits(ctx_tgt);
+    float * target_model_embd = llama_get_embeddings(ctx_tgt);
 
     //TODO add sample procedure
     const int sampled_token_id = 0;
 
     inp.push_back(sampled_token_id);
 
-    TopkGenerateRes topk_res = topk_generate(inp, ctx_dft, total_tokens, depth, top_k);
-    
+    TopkGenerateRes topk_res = topk_generate(inp, ctx_tgt, ctx_dft, total_tokens, depth, top_k, sampled_token_id);
+
 
 
     const auto t_dec_start = ggml_time_us();
@@ -618,15 +628,7 @@ int main(int argc, char ** argv) {
 
     LOG_TEE("\n\n");
 
-    LOG_TEE("encoded %4d tokens in %8.3f seconds, speed: %8.3f t/s\n", n_input,   (t_enc_end - t_enc_start) / 1e6f, inp.size() / ((t_enc_end - t_enc_start) / 1e6f));
-    LOG_TEE("decoded %4d tokens in %8.3f seconds, speed: %8.3f t/s\n", n_predict, (t_dec_end - t_dec_start) / 1e6f, n_predict  / ((t_dec_end - t_dec_start) / 1e6f));
 
-    LOG_TEE("\n");
-    LOG_TEE("n_draft   = %d\n", n_draft);
-    LOG_TEE("n_predict = %d\n", n_predict);
-    LOG_TEE("n_drafted = %d\n", n_drafted);
-    LOG_TEE("n_accept  = %d\n", n_accept);
-    LOG_TEE("accept    = %.3f%%\n", 100.0f * n_accept / n_drafted);
 
     LOG_TEE("\ndraft:\n");
     llama_print_timings(ctx_dft);
